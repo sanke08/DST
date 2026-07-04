@@ -13,9 +13,9 @@ Build rules (dependency ordering, determinism constraints, when to check a box) 
 - [x] **Phase 1 — Foundation** (`internal/dst/core`)
   - [x] Shared types/errors (`EventID`, `NodeID`, `Seed`, sentinel errors)
 
-- [ ] **Phase 2 — Deterministic primitives** (`internal/dst/timesim`, `internal/dst/randsim`)
-  - [ ] `Clock` interface + simulated implementation
-  - [ ] `RNG` interface wrapping a seeded PRNG
+- [x] **Phase 2 — Deterministic primitives** (`internal/dst/timesim`, `internal/dst/randsim`)
+  - [x] `Clock` interface + simulated implementation
+  - [x] `RNG` interface wrapping a seeded PRNG
 
 - [ ] **Phase 3 — Scheduler / event core** (`internal/dst/scheduler`)
   - [ ] Event queue + deterministic tie-breaking
