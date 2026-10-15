@@ -1,53 +1,37 @@
-// Package core holds the shared, dependency-free vocabulary of the DST
-// framework: the ID types and sentinel errors that every other package in
-// this project needs to refer to.
+// Package core holds the small, shared words (types and errors) that every
+// other package in this project needs to use.
 //
-// Why this exists:
-// Without a shared place for these types, every later package (scheduler,
-// transport, storage, ...) would invent its own NodeID or its own "invalid
-// ID" error, and then two packages' IDs wouldn't be comparable and their
-// errors wouldn't match with errors.Is. Centralizing them here means the
-// whole framework speaks the same vocabulary. It also keeps this package
-// import-cycle-free forever: core sits at the very bottom of this project's
-// dependency tree, so every other package depends on it, directly or
-// indirectly, and it must never depend on any of them.
+// Think of it like the glossary at the front of a rulebook. Before anyone can
+// play the game, everybody has to agree on what the basic words mean. That's
+// all core does — it defines the words, it doesn't play the game.
 //
-// What it does:
-// Defines NodeID, EventID, and Seed — small value types that identify
-// "which node," "which scheduled event," and "which random-number seed" —
-// plus the sentinel errors returned when those values are used incorrectly
-// (e.g. a zero-value ID passed where a real one is required).
+// What's inside:
+//   - NodeID   — a number that names one machine (see ids.go)
+//   - EventID  — a number that names one scheduled thing that will happen
+//   - Seed     — the one starting number that makes a run repeatable
+//   - ErrInvalidID — the error used when one of those IDs is missing (errors.go)
 //
-// How it works:
-// These are plain wrapper types around uint64, each with a Valid() method
-// (zero value means "not set") and a String() method for logging. Later
-// packages take these types as constructor/parameter types instead of bare
-// uint64, so the compiler catches a NodeID accidentally passed where an
-// EventID was expected.
+// Why put them all here instead of in each package?
+// Imagine two different packages each made up their OWN "NodeID". They'd look
+// the same but Go would treat them as two unrelated types — you couldn't pass
+// one where the other was expected, and their errors wouldn't match. Keeping
+// these words in ONE place means the whole project speaks the same language.
+//
+// One hard rule for this package:
 //
 // Important:
 //
-//   - Do NOT add an import to any other package in this project, even an
-//     internal/dst one. The moment core imports something that imports core
-//     back, the build breaks with an import cycle, and every downstream
-//     package (all of them) inherits the mess.
-//   - Do NOT add a type "just in case" a later phase might want it. Add a
-//     type here only when the phase that's being built right now needs it.
+//   - Do NOT import any other package from this project into core. core sits at
+//     the very bottom — everyone depends on it, and it depends on no one. If
+//     core imported something that (even indirectly) imported core back, Go
+//     would refuse to build the whole project ("import cycle"). So core only
+//     ever uses Go's own standard library.
+//   - Do NOT add a type here "just in case" a future phase needs it. Add a type
+//     only when the phase you're building right now actually uses it.
 //
-// Determinism note:
-// core defines types only, no logic that touches time, randomness, or
-// ordering — so there's nothing here that can diverge between two runs by
-// itself. But the types it defines (especially Seed) are the seam that
-// later packages use to stay deterministic, so their meaning must stay
-// stable once other packages start depending on them.
-//
-// A note on reading examples in this package: wherever a comment writes
-// `X ⇒ Y`, read the ⇒ as "gives you" or "results in" — e.g. `NodeID(0) ⇒
-// not a real node` just means "if you write NodeID(0), what you get is a
-// value that isn't a real node."
-//
-// The one sentence to remember: this package doesn't do anything by
-// itself — it just gives every other package one shared vocabulary
-// (NodeID, EventID, Seed, and the error for when one of them is missing)
-// so they don't each end up inventing a slightly different version of it.
+// (Determinism note: core is just type definitions — no clock, no randomness,
+// no ordering — so there is nothing here that could behave differently between
+// two runs. But other packages build their repeatable behavior on top of these
+// types, especially Seed, so once code depends on them their meaning must stay
+// stable.)
 package core

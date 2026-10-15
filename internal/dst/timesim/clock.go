@@ -4,117 +4,87 @@ import "time"
 
 // Clock is anything that can answer "what time is it right now?"
 //
-// Why this exists:
-// If every package that needs "the current time" just called time.Now()
-// directly, there would be no way to control time during a simulation —
-// each call would read the real, ever-changing wall clock. By instead
-// taking a Clock as a constructor argument, a package doesn't know or care
-// whether it's talking to the real clock or a fully controllable fake one.
-// In this project it's always the fake one (SimClock, below) — nothing here
-// ever wires up the real clock.
+// Why it's an interface (not just the real clock type):
+// If every package called time.Now() directly, we could never control time
+// during a simulation. Instead, a package asks a Clock. Because it's an
+// interface, the package doesn't know or care whether it's the real clock or a
+// fake one — in this project it's always the fake one (SimClock, below).
 //
-// What it does:
-// A one-method interface: Now() returns the current virtual time. That's
-// the entire contract. Anything that implements this one method can stand
-// in for "the clock" anywhere in this project.
+// Think of Clock like a wall clock in a room: anyone can look up and read it
+// (Now()), but only one person — the scheduler — is allowed to walk over and
+// move the hands.
 //
-// Example:
-// Think of Clock like a wall clock hanging in a room. Anyone in the room
-// can look up and read it (`clock.Now()`), but only one person — the
-// scheduler, in this project — is allowed to walk over and move the hands.
-//
-//	clock.Now() ⇒ whatever virtual time the clock currently shows.
+//	clock.Now() => whatever virtual time the clock currently shows
 type Clock interface {
 	Now() time.Time
 }
 
-// SimClock is the simulated clock used everywhere in this project instead
-// of the real one.
+// SimClock is the fake clock used everywhere in this project instead of the
+// real one.
 //
-// Why this exists:
-// This is the concrete type that makes Clock deterministic: a SimClock only
-// ever changes when something calls Advance on it directly (see Advance).
-// There's no background goroutine, no tie to the operating system's clock —
-// it's just a stored time.Time value that sits still until told to move.
-//
-// What it does:
-// Holds one virtual "current time" value. Now() reads it; Advance (below)
-// is the only thing that moves it forward.
+// It's just a stored time value that sits perfectly still until someone calls
+// Advance on it. There's no background timer and no link to the operating
+// system's clock — it never moves on its own.
 //
 // Important:
 //
-//   - Do NOT construct a SimClock with time.Now() as the start time in any
-//     code that's meant to be deterministic (anything other than a one-off
-//     manual script). Doing so would make two "identical" runs start at two
-//     different real-world moments, and if that start time is ever printed,
-//     logged, or used as a key, two runs of the same seed would disagree.
-//     Always pass an explicit, fixed start time.
+//   - Do NOT start a SimClock at time.Now() in code that must be repeatable.
+//     If you did, two "identical" runs would start at two different real
+//     moments, and if that start time ever gets printed or used as a key, the
+//     two runs would disagree. Always pass a fixed start time.
 type SimClock struct {
+	// now is the clock's current virtual time. Only Advance changes it.
 	now time.Time
 }
 
-// NewSimClock creates a SimClock that starts at the given time.
+// NewSimClock makes a SimClock that starts at the time you give it.
 //
-// Why this exists:
-// The caller must decide the starting virtual time explicitly — that's the
-// whole point of this package. There's no default, and no version of this
-// constructor that reaches for time.Now() on the caller's behalf.
+// There's no default and no version that quietly uses time.Now() — you must
+// pick the starting time on purpose. That's the whole point of the package.
 //
-// Example:
-// Think of it like setting a stopwatch to a specific starting number before
-// a race, instead of trusting whatever time your phone happens to show.
+// Think of it like setting a stopwatch to a chosen starting number before a
+// race, instead of trusting whatever time your phone happens to show:
 //
-//	NewSimClock(time.Unix(0, 0)) ⇒ a clock that starts at virtual time zero.
+//	NewSimClock(time.Unix(0, 0)) => a clock that starts at virtual time zero
 func NewSimClock(start time.Time) *SimClock {
 	return &SimClock{now: start}
 }
 
 // Now returns the clock's current virtual time.
 //
-// Example: a freshly constructed NewSimClock(t).Now() ⇒ t, unchanged until
-// Advance is called.
+//	NewSimClock(t).Now() => t, and it stays t until you call Advance
 func (c *SimClock) Now() time.Time {
 	return c.now
 }
 
-// Advance moves the clock's virtual time forward by d.
+// Advance moves the clock forward by d. This is the ONLY thing that changes
+// what Now() returns.
 //
-// Why this exists:
-// This is the only method that changes what Now() returns. The scheduler
-// (Phase 3) will call this once per processed event, advancing the clock to
-// that event's virtual timestamp before running it — so "what time is it"
-// always matches "what event are we currently processing."
+// The scheduler calls this once per event, moving the clock to that event's
+// time before running it — so "what time is it?" always matches "which event
+// are we running?"
 //
-// Example:
-// Think of it like moving a board-game piece forward by however many spaces
-// the dice say — never backward, and never more than one turn's worth at a
-// time.
+// Think of it like moving a board-game piece forward by however many spaces the
+// dice say — only forward, never back:
 //
-//	clock.Advance(5 * time.Second) ⇒ Now() reports 5 seconds later than before.
+//	clock.Advance(5 * time.Second) => Now() now reports 5 seconds later
 //
-// What goes wrong without the negative-duration guard:
-// Say the clock reads 10:00:05 and the scheduler is about to process two
-// pending events, one timestamped 10:00:10 and one timestamped 10:00:08.
-// If the scheduler's own bookkeeping had a bug and asked to advance by -2
-// seconds partway through (going from 10:00:10 back to 10:00:08), any code
-// that had already run "at 10:00:10" and read the clock would see time run
-// backward — a message that was supposedly delivered later would appear to
-// exist before one delivered earlier. That's not a rare edge case to
-// tolerate; it's a direct contradiction of "events happen in a fixed
-// order," which is the one thing this whole framework promises.
+// Why it refuses to go backward:
+// Say the clock reads 10:00:05 and, because of a bug, something asks to advance
+// by -2 seconds. Code that already ran "later" would suddenly see time move
+// backward — a message delivered later would look like it happened before an
+// earlier one. That breaks the one thing this whole project promises: events
+// happen in a fixed, sensible order. So a negative jump can only be a bug in
+// the scheduler, not a normal thing to quietly allow.
 //
 // Important:
 //
-//   - Do NOT call Advance with a negative duration. Advance panics if d is
-//     negative, on purpose: a negative duration here means the scheduler
-//     itself computed an impossible timestamp, which is a bug in this
-//     framework's core, not a normal error a caller should be expected to
-//     recover from.
+//   - Do NOT call Advance with a negative duration. It panics on purpose — a
+//     negative jump means the scheduler computed an impossible time, which is a
+//     bug to fix, not an error to recover from.
 //
-// Determinism note:
-// Calling Advance with the same starting time and the same sequence of
-// durations always produces the same sequence of Now() results, on any
-// machine. That's the entire determinism guarantee this type provides.
+// (Determinism note: same start time + same list of durations, in the same
+// order, always gives the same times out of Now() — on any machine.)
 func (c *SimClock) Advance(d time.Duration) {
 	if d < 0 {
 		panic("timesim: Advance called with a negative duration; virtual time must never move backward")

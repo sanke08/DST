@@ -2,160 +2,145 @@ package core
 
 import "fmt"
 
-// NodeID identifies one participant ("node") in a simulated system — for
-// example, one replica in a distributed key-value store.
+// NodeID is just a number that names one machine in our simulation.
 //
-// A common misconception, cleared up first:
-// In most Go code, a zero value is just an ordinary, usable default — an
-// empty string is a fine string, 0 is a fine int. NodeID does NOT work that
-// way. NodeID(0) is reserved to mean "no node was set" — it is never a real
-// node, even though nothing about it looks unusual to Go. Every real node
-// must be assigned a NodeID of 1 or greater. This zero-means-invalid
-// convention is shared by every ID type in this file (see EventID and Seed
-// below), so it's worth getting comfortable with it here, once.
+// Picture a small chat app running on 3 servers. We call them
+// server 1, server 2, and server 3. NodeID is that number.
 //
-// Why this exists:
-// Later packages (transport, harness) need to say "this message is from
-// node 3, to node 7" without agreeing separately on what a node identifier
-// even is. Wrapping a plain uint64 in a named type also stops you from
-// accidentally passing an EventID where a NodeID was meant — the Go
-// compiler rejects that at build time, even though both are uint64
-// underneath.
+//	NodeID(1) => the first server
+//	NodeID(2) => the second server
+//	NodeID(3) => the third server
 //
-// What goes wrong without this convention:
-// In Go, a struct field of type NodeID that nobody explicitly set defaults
-// to NodeID(0) automatically — there's no way to tell "someone deliberately
-// chose node zero" apart from "this field was just never filled in." If
-// NodeID(0) were treated as an ordinary, valid node, a forgotten field
-// wouldn't cause a crash or an obvious error — it would silently behave as
-// if "node 0" were a real participant in the simulation, and a bug (a
-// config value never wired up) would look exactly like ordinary, correct
-// data. Reserving 0 as "invalid" turns that silent bug into something
-// Valid() (below) can actually catch.
+// Why not just use a plain number (uint64) then?
+// Two reasons:
 //
-// Example:
-// Think of a NodeID like a locker number at a gym. Locker #3 points at
-// one specific, real locker. Locker #0 doesn't exist — it just means "no
-// locker picked yet."
+//  1. Giving it a name (NodeID) makes the code read like English.
+//     "send this message from NodeID(1) to NodeID(2)" is clearer than
+//     "send from 1 to 2" where you have to guess what the 1 and 2 mean.
 //
-//	NodeID(3) ⇒ a real node, node number 3.
-//	NodeID(0) ⇒ means "no node," not a real one.
+//  2. It stops mix-up bugs. Later we also have EventID (see below), which
+//     is ALSO just a number. If both were plain numbers, you could
+//     accidentally pass an event number where a server number was expected
+//     and nobody would notice. Because they are different named types, Go
+//     refuses to build the code if you mix them up. Free bug protection.
 //
-// Important:
+// One special rule to remember:
+// The number 0 is NOT a real server. We use 0 to mean "nobody filled this
+// in yet / empty / not set."
 //
-//   - Do NOT assume a NodeID handed to you is valid just because it
-//     type-checks. Go's compiler happily accepts NodeID(0) anywhere a
-//     NodeID is expected — "zero means invalid" is a convention this
-//     project agrees to, not something the type system enforces for you.
-//     Call Valid() (defined right below) on any NodeID that came from
-//     outside your own code before you trust it.
+//	NodeID(3) => a real server, server number 3
+//	NodeID(0) => "no server chosen", NOT a real server
 //
-// Determinism note:
-// NodeID values must be assigned by the caller (e.g. "node 1, 2, 3..." in
-// the order the SUT is configured), never generated from time or
-// randomness. As long as assignment order is fixed, NodeIDs are
-// deterministic by construction.
+// Think of it like a locker at the gym. Locker #3 is a real locker you can
+// open. "Locker #0" means you haven't picked a locker yet.
 //
-// The one sentence to remember: in this package, zero doesn't mean "the
-// default" — it means "nothing was set."
+// Why bother reserving 0?
+// In Go, if you make a struct and forget to fill in a NodeID field, Go
+// quietly sets it to 0 for you. If 0 were a real server, that forgotten
+// field would look like "oh, this belongs to server 0" and your program
+// would keep running with wrong data — a silent bug that's really hard to
+// find. By saying "0 is never real", we can add a Valid() check that
+// catches the mistake immediately.
+//
+// So: after you receive a NodeID from somewhere else, call Valid() on it
+// before trusting it. Go's compiler will NOT catch a 0 for you — that's on
+// us to check.
+//
+// (Determinism note, for later: server numbers are handed out by us in a
+// fixed order — 1, 2, 3... — never picked randomly or from the clock. That
+// way, re-running the simulation always gives the same numbers.)
 type NodeID uint64
 
-// Valid reports whether n is a real node identifier (non-zero).
+// Valid returns true if n is a real server (any number except 0).
 //
-// Example: NodeID(0).Valid() ⇒ false; NodeID(1).Valid() ⇒ true.
+//	NodeID(0).Valid() => false  (empty / not set)
+//	NodeID(1).Valid() => true   (a real server)
 func (n NodeID) Valid() bool {
 	return n != 0
 }
 
-// String renders n for logs and error messages.
+// String is how a NodeID looks when printed in logs.
 //
-// Example: NodeID(3).String() ⇒ "node-3".
+//	NodeID(3).String() => "node-3"
 func (n NodeID) String() string {
 	return fmt.Sprintf("node-%d", uint64(n))
 }
 
-// EventID identifies one scheduled event in the simulation — for example,
-// "deliver this message" or "fire this timer."
+// EventID is just a number that names one thing that is scheduled to happen
+// in the simulation.
 //
-// Why this exists:
-// The scheduler (Phase 3) needs a way to name individual events so it can,
-// for instance, cancel one specific pending timer, or so a trace (Phase 5)
-// can record "event 42 fired at virtual time 100." Giving events their own
-// ID type — rather than reusing NodeID or a bare uint64 — keeps "which
-// node" and "which event" from being confused at a call site.
+// Examples of an "event": "deliver this chat message", "fire this timer",
+// "this server wakes up". Each one gets its own EventID number so we can
+// point at it later.
 //
-// What it does:
-// Same zero-means-invalid convention as NodeID above, applied to scheduled
-// events instead of nodes:
+// Real-world use: say a server sets a 5-second timer, then the reply arrives
+// early so we want to cancel that timer. We need a way to say WHICH timer to
+// cancel — that's what the EventID is for:
 //
-//	EventID(42) ⇒ a real, specific scheduled event.
-//	EventID(0)  ⇒ means "no event," not a real one.
+//	EventID(42) => the specific event we are talking about
+//	EventID(0)  => "no event", NOT a real one (same 0 rule as NodeID above)
 //
-// Determinism note:
-// EventIDs must be assigned by the scheduler in a fixed, reproducible order
-// (e.g. a counter that increments once per scheduled event) — never from
-// time or randomness — so that replaying the same sequence of scheduling
-// calls produces the same EventIDs every time.
+// It's a separate type from NodeID for the same reason as before: so you
+// can't accidentally swap "which server" and "which event" — Go won't let
+// you.
+//
+// (Determinism note: EventIDs are handed out by the scheduler with a simple
+// counter — 1, 2, 3... — one per event, never random. Same list of events
+// scheduled => same EventIDs every time.)
 type EventID uint64
 
-// Valid reports whether e is a real event identifier (non-zero).
+// Valid returns true if e is a real event (any number except 0).
 //
-// Example: EventID(0).Valid() ⇒ false; EventID(42).Valid() ⇒ true.
+//	EventID(0).Valid()  => false  (empty / not set)
+//	EventID(42).Valid() => true   (a real event)
 func (e EventID) Valid() bool {
 	return e != 0
 }
 
-// String renders e for logs and error messages.
+// String is how an EventID looks when printed in logs.
 //
-// Example: EventID(42).String() ⇒ "event-42".
+//	EventID(42).String() => "event-42"
 func (e EventID) String() string {
 	return fmt.Sprintf("event-%d", uint64(e))
 }
 
-// Seed is the starting value fed into a pseudo-random number generator
-// (PRNG) to make an entire simulation run reproducible.
+// Seed is the one starting number that makes a whole simulation repeatable.
 //
-// Why this exists:
-// Phase 2's RNG will be constructed from exactly one Seed value, and that's
-// the master key that makes "run it again and get the exact same sequence
-// of random-looking numbers" possible. Naming it here, in core, means Phase
-// 2 (and every phase after it that needs to print or log "which seed
-// produced this run") shares one definition instead of each package
-// deciding for itself whether a seed is a uint64, an int64, or a string.
+// A computer's "random" numbers aren't truly random — they come from a
+// formula that starts from a seed number. Give it the SAME seed and you get
+// the SAME sequence of numbers back, every single time.
 //
-// What it does:
-// Same zero-means-invalid convention as NodeID and EventID above — with one
-// twist worth calling out: most PRNG algorithms treat 0 as a perfectly
-// ordinary starting value. They have no idea this project wants to reserve
-// it for "unset." Valid() (below) is what enforces that distinction.
+// Think of a combination-lock toy: type in the same starting code and it
+// spits out the exact same "random" sequence each time. The seed is that
+// starting code.
 //
-// Example:
-// Think of a Seed like the starting code you type into a combination-lock
-// toy that spits out a "random" sequence of numbers. Type in the same
-// starting code twice, and you get the exact same sequence back both
-// times — it only looks random if you don't know the code.
+//	Seed(42) => run the simulation and you get the exact same result again
+//	Seed(0)  => "no seed chosen", NOT a real one (same 0 rule as above)
 //
-//	Seed(42) ⇒ always the same sequence of "random" numbers, every run.
-//	Seed(0)  ⇒ this project treats as "no seed chosen," not a real one.
+// Why this matters for us: this is the whole point of the project. A test
+// fails? Write down its seed. Re-run with that same seed and the failure
+// happens again in exactly the same way, so you can actually debug it.
 //
-// Determinism note:
-// Seed is the root of determinism for the entire framework. Nothing
-// upstream of a Seed value may be random — the seed itself must come from
-// an explicit, recorded source (a CLI flag, a trace file), never from
-// time.Now() or an unseeded system RNG.
+// Heads up: unlike our IDs, most random-number formulas are perfectly happy
+// to start from 0. THEY don't treat 0 as special — WE do, only to catch the
+// "forgot to set it" mistake. Valid() is what enforces our rule.
+//
+// (Determinism note: the seed must come from something we chose on purpose —
+// a command-line flag, a saved file — never from time.Now() or the system's
+// built-in randomness. If the seed itself were random, nothing would be
+// repeatable.)
 type Seed uint64
 
-// Valid reports whether s has been explicitly set (non-zero).
+// Valid returns true if s was actually set (any number except 0).
 //
-// Example: Seed(0).Valid() ⇒ false — this project requires callers to pick
-// a real seed rather than silently defaulting to the zero value.
+//	Seed(0).Valid() => false  (caller must pick a real seed on purpose)
 func (s Seed) Valid() bool {
 	return s != 0
 }
 
-// String renders s for logs and error messages.
+// String is how a Seed looks when printed in logs.
 //
-// Example: Seed(42).String() ⇒ "seed-42".
+//	Seed(42).String() => "seed-42"
 func (s Seed) String() string {
 	return fmt.Sprintf("seed-%d", uint64(s))
 }
